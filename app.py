@@ -1,28 +1,37 @@
 import streamlit as st
 import pandas as pd
-import time 
+import os
 from datetime import datetime
 
-ts=time.time()
-date=datetime.fromtimestamp(ts).strftime("%d-%m-%Y")
-timestamp=datetime.fromtimestamp(ts).strftime("%H:%M-%S")
+st.set_page_config(page_title="Face Recognition Attendance", page_icon="🧠", layout="wide")
 
-from streamlit_autorefresh import st_autorefresh
+st.title("📅 Face Recognition Attendance Dashboard")
 
-count = st_autorefresh(interval=2000, limit=100, key="fizzbuzzcounter")
-
-if count == 0:
-    st.write("Count is zero")
-elif count % 3 == 0 and count % 5 == 0:
-    st.write("FizzBuzz")
-elif count % 3 == 0:
-    st.write("Fizz")
-elif count % 5 == 0:
-    st.write("Buzz")
+# --- Load Attendance files ---
+attendance_dir = "Attendance"
+if not os.path.exists(attendance_dir):
+    st.error("No Attendance directory found.")
 else:
-    st.write(f"Count: {count}")
+    files = [f for f in os.listdir(attendance_dir) if f.endswith(".csv")]
+    if not files:
+        st.warning("No attendance records found.")
+    else:
+        files.sort(reverse=True)
+        selected_file = st.selectbox("Select Attendance File", files)
 
+        if selected_file:
+            path = os.path.join(attendance_dir, selected_file)
+            df = pd.read_csv(path)
+            st.subheader(f"📋 Records for {selected_file.replace('Attendance_', '').replace('.csv','')}")
+            st.dataframe(df)
 
-df=pd.read_csv("Attendance/Attendance_" + date + ".csv")
+            st.markdown("---")
+            st.subheader("📊 Summary")
 
-st.dataframe(df.style.highlight_max(axis=0))
+            total_present = df['NAME'].nunique()
+            st.metric("Total Unique Students Present", total_present)
+
+            st.bar_chart(df['NAME'].value_counts())
+
+            if st.button("🔁 Refresh Data"):
+                st.experimental_rerun()

@@ -41,16 +41,16 @@ FACES = np.array(FACES)
 LABELS = np.array(LABELS)
 print('Shape of Faces matrix -->', FACES.shape)
 
-# Train KNN
+
 knn = KNeighborsClassifier(n_neighbors=5)
 knn.fit(FACES, LABELS)
 
-# Load background (optional)
+# Load background
 image_back = cv2.imread(BACKGROUND_PATH)
 if image_back is None:
     print(f"Note: '{BACKGROUND_PATH}' not found — using camera frames directly.")
 else:
-    # define overlay region and allow resizing if needed
+    
     OVERLAY_Y, OVERLAY_X = 162, 55
     OVERLAY_H, OVERLAY_W = 480, 640
 
@@ -59,8 +59,8 @@ if not video.isOpened():
     raise SystemExit("ERROR: could not open webcam")
 
 COL_NAMES = ['NAME', 'DATE', 'TIME']
-recorded_today = set()   # to avoid duplicates in a session
-last_detected = []       # store last detected names and timestamps
+recorded_today = set()   
+last_detected = []       
 
 print("Press 'o' to record attendance for current detected face(s). Press 'q' to quit.")
 
