@@ -1,4 +1,3 @@
-# gui_attendance.py
 import cv2
 import pickle
 import numpy as np
@@ -14,21 +13,19 @@ import pyttsx3
 from sklearn.neighbors import KNeighborsClassifier
 import subprocess
 
-# ---------- Configuration ----------
+
 CASCADE = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
 DATA_FACES = "data/faces_data.pkl"
 DATA_NAMES = "data/names.pkl"
 ATT_DIR = "Attendance"
 os.makedirs(ATT_DIR, exist_ok=True)
 IMG_SZ = (50, 50)
-# -----------------------------------
 
-# Load cascade
 face_cascade = cv2.CascadeClassifier(CASCADE)
 if face_cascade.empty():
     raise SystemExit("Cannot load Haar cascade.")
 
-# Load trained data (expect train.py already created these)
+
 with open(DATA_FACES, "rb") as f:
     FACES = pickle.load(f)
 with open(DATA_NAMES, "rb") as f:
