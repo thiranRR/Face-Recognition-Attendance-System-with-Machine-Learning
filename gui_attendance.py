@@ -7,7 +7,7 @@ import time
 import threading
 from datetime import datetime
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 from PIL import Image, ImageTk
 import pyttsx3
 from sklearn.neighbors import KNeighborsClassifier
@@ -20,6 +20,7 @@ DATA_NAMES = "data/names.pkl"
 ATT_DIR = "Attendance"
 os.makedirs(ATT_DIR, exist_ok=True)
 IMG_SZ = (50, 50)
+
 
 face_cascade = cv2.CascadeClassifier(CASCADE)
 if face_cascade.empty():
@@ -79,11 +80,13 @@ title = tk.Label(control_frame, text="Attendance Panel", font=("Helvetica", 14, 
 title.pack(pady=10)
 
 btn_take = ttk.Button(control_frame, text="Take Attendance")
+btn_add  = ttk.Button(control_frame, text="Add Face")            # <-- new button
 btn_show = ttk.Button(control_frame, text="Show Today's Records")
 btn_clear = ttk.Button(control_frame, text="Clear Session Records")
 btn_quit = ttk.Button(control_frame, text="Quit")
 
 btn_take.pack(fill="x", padx=15, pady=6)
+btn_add.pack(fill="x", padx=15, pady=6)                           # <-- pack new button
 btn_show.pack(fill="x", padx=15, pady=6)
 btn_clear.pack(fill="x", padx=15, pady=6)
 btn_quit.pack(fill="x", padx=15, pady=6)
@@ -149,6 +152,16 @@ def camera_loop():
 threading.Thread(target=camera_loop, daemon=True).start()
 
 # Attendance functions
+def _time_greeting():
+    h = datetime.now().hour
+    if 5 <= h < 12:
+        return "Good morning"
+    if 12 <= h < 17:
+        return "Good afternoon"
+    if 17 <= h < 21:
+        return "Good evening"
+    return "Good night"
+
 def take_attendance():
     global last_detected, recorded_today
     if not last_detected:
@@ -170,6 +183,10 @@ def take_attendance():
         recorded_today.add(name)
         log(f"Recorded: {name} at {time_str}")
         saved=True
+        # Greeting voice for this recorded person
+        greeting = f"{_time_greeting()} {name}"
+        speak_async(greeting)
+
     if saved:
         speak_async("Attendance recorded")
     else:
@@ -206,11 +223,142 @@ def quit_app():
         cap.release()
         root.destroy()
 
+# --- Add-face helper functions ---
+def load_training_data():
+    if os.path.isfile(DATA_FACES) and os.path.isfile(DATA_NAMES):
+        with open(DATA_FACES, "rb") as f:
+            faces = pickle.load(f)
+        with open(DATA_NAMES, "rb") as f:
+            names = pickle.load(f)
+        return np.array(faces), np.array(names)
+    # empty fallback: shape compatible with IMG_SZ and 3 channels
+    return np.empty((0, IMG_SZ[0]*IMG_SZ[1]*3)), np.array([])
+
+def save_training_data(faces_arr, names_arr):
+    with open(DATA_FACES, "wb") as f:
+        pickle.dump(list(faces_arr), f)
+    with open(DATA_NAMES, "wb") as f:
+        pickle.dump(list(names_arr), f)
+
+def retrain_knn(n_neighbors=5):
+    global knn, FACES, LABELS
+    faces_arr, names_arr = load_training_data()
+    if names_arr.size == 0:
+        return
+    FACES = np.array(faces_arr)
+    LABELS = np.array(names_arr)
+    knn = KNeighborsClassifier(n_neighbors=n_neighbors)
+    knn.fit(FACES, LABELS)
+    log("Classifier retrained with new data.")
+
+def add_face_via_camera(samples=8, camera_index=0):
+    """
+    Open camera, collect `samples` face crops for a given name, append to data,
+    save pickles and retrain classifier.
+    """
+    name = simpledialog.askstring("Add Face", "Enter the person's name:", parent=root)
+    if not name:
+        return
+
+    # use a separate VideoCapture to avoid interfering with main preview
+    cap2 = cv2.VideoCapture(camera_index)
+    if not cap2.isOpened():
+        messagebox.showerror("Camera Error", "Cannot open camera for capturing faces.")
+        return
+
+    collected = []
+    last_capture = 0.0
+    interval = 0.6
+
+    messagebox.showinfo("Instructions",
+                        f"A window will open. {samples} face samples will be captured automatically. Press 'q' to cancel.",
+                        parent=root)
+    try:
+        while len(collected) < samples:
+            ret, frame = cap2.read()
+            if not ret or frame is None:
+                time.sleep(0.02)
+                continue
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            faces = face_cascade.detectMultiScale(gray, scaleFactor=1.3, minNeighbors=5)
+            if faces is not None and len(faces) > 0:
+                x, y, w, h = sorted(faces, key=lambda r: r[2]*r[3], reverse=True)[0]
+                cv2.rectangle(frame, (x,y), (x+w,y+h), (0,255,0), 2)
+            cv2.putText(frame, f"Collected: {len(collected)}/{samples}", (10,30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255,255,255), 2)
+            cv2.imshow("Add Face - Press 'q' to cancel", frame)
+            key = cv2.waitKey(1) & 0xFF
+
+            now = time.time()
+            if faces is not None and len(faces) > 0 and (now - last_capture) > interval:
+                try:
+                    crop = frame[y:y+h, x:x+w]
+                    if crop.size == 0:
+                        continue
+                    resized = cv2.resize(crop, IMG_SZ)
+                    flat = resized.flatten()
+                    collected.append(flat)
+                    last_capture = now
+                except Exception:
+                    pass
+
+            if key == ord('q'):
+                break
+    finally:
+        cap2.release()
+        cv2.destroyWindow("Add Face - Press 'q' to cancel")
+
+    if len(collected) == 0:
+        messagebox.showinfo("Add Face", "No face samples captured.")
+        return
+
+    faces_arr, names_arr = load_training_data()
+    if faces_arr.size == 0:
+        faces_arr = np.array(collected)
+        names_arr = np.array([name] * len(collected))
+    else:
+        faces_arr = np.vstack([faces_arr, np.array(collected)])
+        names_arr = np.concatenate([names_arr, np.array([name] * len(collected))])
+
+    save_training_data(faces_arr, names_arr)
+    retrain_knn()
+    messagebox.showinfo("Add Face", f"Saved {len(collected)} samples for '{name}'.")
+
+# --- Modern styling (ttk) ---
+style = ttk.Style()
+try:
+    style.theme_use('clam')   # modern-ish, available cross-platform
+except Exception:
+    pass
+style.configure('Accent.TButton',
+                font=('Segoe UI', 11, 'bold'),
+                padding=8,
+                foreground='#ffffff',
+                background='#2b8cff')
+style.map('Accent.TButton',
+          background=[('active', '#1a6fe0'), ('pressed', '#155ecb')])
+
+style.configure('Ghost.TButton',
+                font=('Segoe UI', 10),
+                padding=6,
+                foreground='#333333',
+                background='#f0f0f0')
+
+# Wire the new button
+btn_add.config(command=lambda: threading.Thread(target=add_face_via_camera, daemon=True).start())
+
 # Wire buttons
 btn_take.config(command=take_attendance)
 btn_show.config(command=show_today)
 btn_clear.config(command=clear_session)
 btn_quit.config(command=quit_app)
+
+# After buttons were created, apply styles for a modern look
+btn_take.configure(style='Accent.TButton')
+btn_add.configure(style='Accent.TButton')
+btn_show.configure(style='Ghost.TButton')
+btn_clear.configure(style='Ghost.TButton')
+btn_quit.configure(style='Ghost.TButton')
 
 root.protocol("WM_DELETE_WINDOW", quit_app)
 root.mainloop()
